@@ -489,64 +489,6 @@ def __cuda_check_sdk_version(conanfile, cuda_sdk_root, cuda_version):
 # Python configuration
 #
 
-def __python_run_command(conanfile, python_exec, command):
-    output = StringIO()
-    conanfile.output.info('running python command: "{0}" -c "{1}"'.format(python_exec, command))
-    conanfile.run('"{0}" -c "{1}"'.format(python_exec, command), output=output, run_environment=True)
-    return output.getvalue().strip()
-
-
-def __python_get_interpreter_fullpath(conanfile, command=None, use_system_python=True):
-    if command is None and not use_system_python:
-        raise ValueError("Python interpreter not found - if use_system_python=False, you must specify a command")
-    if command is None:
-        if tools.os_info.is_windows and not tools.os_info.detect_windows_subsystem():
-            command = "python"
-        else:
-            command = "python3"
-
-    try:
-        return __python_run_command(command, "import sys; print(sys.executable)")
-    except Exception as e:
-        conanfile.output.error("Error while running python command: {0}".format(e))
-        raise RuntimeError("Error while executing python command.")
-
-
-def __python_get_sysconfig_var(conanfile, var_name):
-    try:
-        cmd = "import sysconfig; print(sysconfig.get_config_var('{0}'))".format(var_name)
-        return __python_run_command(command, cmd)
-    except Exception as e:
-        conanfile.output.error("Error while running python command: {0}".format(e))
-        raise RuntimeError("Error while executing python command.")
-
-
-def __python_get_sysconfig_path(conanfile, path_name):
-    try:
-        cmd = "import sysconfig; print(sysconfig.get_path('{0}'))".format(path_name)
-        return __python_run_command(command, cmd)
-    except Exception as e:
-        conanfile.output.error("Error while running python command: {0}".format(e))
-        raise RuntimeError("Error while executing python command.")
-
-def __python_get_version(conanfile, python_exec):
-    try:
-        cmd = "from sys import *; print('{0}.{1}'.format(version_info[0],version_info[1]))"
-        return __python_run_command(command, cmd)
-    except Exception as e:
-        conanfile.output.error("Error while running python command: {0}".format(e))
-        raise RuntimeError("Error while executing python command.")
-
-
-def __python_get_version_nodot(conanfile, python_exec):
-    try:
-        cmd = "from sys import *; print('{0}{1}'.format(version_info[0],version_info[1]))"
-        return __python_run_command(command, cmd)
-    except Exception as e:
-        conanfile.output.error("Error while running python command: {0}".format(e))
-        raise RuntimeError("Error while executing python command.")
-
-
 
 # reusable code for ConanFile
 class CampPythonBase(object):
@@ -566,15 +508,15 @@ class CampPythonBase(object):
             cmd = str(self.options.python)
         if 'with_system_python' in self.options:
             with_system_python = bool(self.options.with_system_python)
-        return __python_get_interpreter_fullpath(self, cmd, with_system_python)
+        return self.__python_get_interpreter_fullpath(cmd, with_system_python)
 
     @LazyProperty
     def _python_version(self):
-        return __python_get_version(self, self._python_exec)
+        return self.__python_get_version(self._python_exec)
 
     @LazyProperty
     def _python_version_nodot(self):
-        return __python_get_version_nodot(self, self._python_exec)
+        return self.__python_get_version_nodot(self._python_exec)
 
     @LazyProperty
     def _python_lib(self):
@@ -584,10 +526,10 @@ class CampPythonBase(object):
             if py_lib:
                 py_lib = os.path.join(os.path.dirname(py_lib), "libs", "python" + self._python_version_nodot + ".lib")
         elif tools.os_info.is_macos:
-            py_lib = os.path.join(__python_get_sysconfig_var(self, 'LIBDIR'), __python_get_sysconfig_var(self, 'LIBRARY'))
+            py_lib = os.path.join(self.__python_get_sysconfig_var('LIBDIR'), self.__python_get_sysconfig_var('LIBRARY'))
         else:
-            py_lib = os.path.join(__python_get_sysconfig_var(self, 'LIBDIR'), __python_get_sysconfig_var(self, 'LDLIBRARY'))
-        return pylib
+            py_lib = os.path.join(self.__python_get_sysconfig_var('LIBDIR'), self.__python_get_sysconfig_var('LDLIBRARY'))
+        return py_lib
 
     @LazyProperty
     def _python_lib_ldname(self):
@@ -596,27 +538,85 @@ class CampPythonBase(object):
             py_lib_ldname = os.path.basename(self._python_lib)
         else:
             py_lib_ldname = re.sub(r'lib', '', os.path.splitext(os.path.basename(self._python_lib))[0])
-        return pylib
+        return py_lib_ldname
 
     @LazyProperty
     def _python_stdlib(self):
-        return __python_get_sysconfig_path(self, "stdlib")
+        return self.__python_get_sysconfig_path("stdlib")
 
     @LazyProperty
     def _python_prefix(self):
-        return __python_get_sysconfig_var(self, "prefix")
+        return self.__python_get_sysconfig_var("prefix")
 
     @LazyProperty
     def _python_bindir(self):
-        return __python_get_sysconfig_var(self, "BINDIR")
+        return self.__python_get_sysconfig_var("BINDIR")
 
     @LazyProperty
     def _python_include_dir(self):
-        for py_include in [__python_get_sysconfig_path(self, "include"), __python_get_sysconfig_var(self, 'INCLUDEPY')]:
+        for py_include in [self.__python_get_sysconfig_path("include"), self.__python_get_sysconfig_var('INCLUDEPY')]:
                 if os.path.exists(os.path.join(py_include, 'pyconfig.h')):
                     return py_include
         return None
 
+
+    #internal functions
+    def __python_run_command(self, python_exec, command):
+        output = StringIO()
+        self.output.info('running python command: "{0}" -c "{1}"'.format(python_exec, command))
+        self.run('"{0}" -c "{1}"'.format(python_exec, command), output=output, run_environment=True)
+        return output.getvalue().strip()
+
+
+    def __python_get_interpreter_fullpath(self, command=None, use_system_python=True):
+        if command is None and not use_system_python:
+            raise ValueError("Python interpreter not found - if use_system_python=False, you must specify a command")
+        if command is None:
+            if tools.os_info.is_windows and not tools.os_info.detect_windows_subsystem():
+                command = "python"
+            else:
+                command = "python3"
+
+        try:
+            return self.__python_run_command(command, "import sys; print(sys.executable)")
+        except Exception as e:
+            self.output.error("Error while running python command: {0}".format(e))
+            raise RuntimeError("Error while executing python command.")
+
+
+    def __python_get_sysconfig_var(self, var_name):
+        try:
+            cmd = "import sysconfig; print(sysconfig.get_config_var('{0}'))".format(var_name)
+            return self.__python_run_command(self._python_exec, cmd)
+        except Exception as e:
+            self.output.error("Error while running python command: {0}".format(e))
+            raise RuntimeError("Error while executing python command.")
+
+
+    def __python_get_sysconfig_path(self, path_name):
+        try:
+            cmd = "import sysconfig; print(sysconfig.get_path('{0}'))".format(path_name)
+            return self.__python_run_command(self._python_exec, cmd)
+        except Exception as e:
+            self.output.error("Error while running python command: {0}".format(e))
+            raise RuntimeError("Error while executing python command.")
+
+    def __python_get_version(self, python_exec):
+        try:
+            cmd = "from sys import *; print('{0}.{1}'.format(version_info[0],version_info[1]))"
+            return self.__python_run_command(self._python_exec, cmd)
+        except Exception as e:
+            self.output.error("Error while running python command: {0}".format(e))
+            raise RuntimeError("Error while executing python command.")
+
+
+    def __python_get_version_nodot(self, python_exec):
+        try:
+            cmd = "from sys import *; print('{0}{1}'.format(version_info[0],version_info[1]))"
+            return self.__python_run_command(self._python_exec, cmd)
+        except Exception as e:
+            self.output.error("Error while running python command: {0}".format(e))
+            raise RuntimeError("Error while executing python command.")
 
 
 
