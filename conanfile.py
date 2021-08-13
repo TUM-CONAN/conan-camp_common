@@ -17,15 +17,7 @@ except ImportError:
     from io import StringIO
 
 
-## somehow exporting does not provide access to package options
-# so defining cuda_root only works with conan create, but not conan export ..
-CUDA_ROOT_DEFAULT = None
-if tools.os_info.is_windows:
-    CUDA_ROOT_DEFAULT = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.1"
-elif tools.os_info.is_linux:
-    CUDA_ROOT_DEFAULT = "/usr/local/cuda-11.1"
-else:
-    print("WARNING: Building on Unsupported Platform!!")
+
 
 
 # Utilities
@@ -413,75 +405,134 @@ def fix_conan_path(
 
 
 #
-# Find Cuda SDK
+# Baseclass for CUDA Dependency
 #
 
-def __cuda_get_sdk_root_and_version(conanfile, cuda_version=None):
-    cuda_sdk_root = None
-    cuda_version_found = None
+# reusable code for ConanFile
+class CampCudaBase(object):
+    """
+    BaseClass for Conan PythonRequires for packages that have a cuda dependency.
+    Expects two options: 
+    'cuda_version': requested CUDA Version
+    'cuda_root': path to cuda sdk root directory
+    """
 
-    supported_versions = reversed(v for v in get_cuda_version() if v != 'None')
-    find_cuda_versions = []
-    if cuda_version is not None:
-        if cuda_version not in supported_versions:
-            raise ValueError("Unsupported CUDA SDK Version requested: {0}".format(cuda_version))
-        find_cuda_versions = [cuda_version,]
-    else:
-        find_cuda_versions = supported_versions
+    @LazyProperty
+    def _cuda_sdk_root(self):
+        cuda_version = None
+        cuda_root = None
+        if 'cuda_version' in self.options:
+            cuda_version = str(self.options.cuda_version)
 
+        if 'cuda_root' in self.options:
+            cuda_root = str(self.options.cuda_root)
+        
+        if cuda_root is None:
+            cuda_root, cv = self.__cuda_get_sdk_root_and_version(cuda_version)
+            if cuda_version is not None and cv != cuda_version:
+                raise ValueError("CUDA SDK Version requested != found ({0} vs {1})".format(cuda_version, cv))
+            if cuda_version is None:
+                cuda_version = cv
+            if cuda_root is None:
+                raise RuntimeError("No suitable CUDA SDK Root directory found.")
+        elif cuda_version is not None:
+            if not self.__cuda_check_sdk_version(cuda_root, cuda_version):
+                raise RuntimeError("No suitable CUDA SDK Root directory found - cuda_check_sdk_version failed.")
 
-    if tools.os_info.is_linux:
-        for cv in find_cuda_versions:
-            cuda_sdk_root = "/usr/local/cuda-{0}".format(cv)
-            if os.path.exists(cuda_sdk_root):
-                cuda_sdk_root = cuda_sdk_root
-                cuda_version_found = cv
-                break
-    if tools.os_info.is_windows:
-        default_path = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v{}"
-        for version in find_cuda_versions:
-            cuda_sdk_root = default_path.format(version)
-            if os.path.exists(cuda_sdk_root):
-                cuda_sdk_root = cuda_sdk_root
-                cuda_version_found = cv
-                break
-    if cuda_sdk_root is None or cuda_version_found is None:
-        raise ValueError("Could not find CUDA Sdk version: {0}".format(cuda_version or "ANY"))
-
-    conanfile.output.log("Found CUDA SDK {0} at: {1}".format(cuda_version_found, cuda_sdk_root))
-    return cuda_sdk_root, cuda_version_found
+        return cuda_root
 
 
-def __cuda_get_nvcc_filename(conanfile, cuda_sdk_root):
-    return os.path.join(cuda_sdk_root, 'bin', 'nvcc')
+    @LazyProperty
+    def _cuda_version(self):
+        cuda_root = self._cuda_sdk_root
+        if cuda_root is None:
+            return None
+        return self.__cuda_get_sdk_version(cuda_root)
+
+    @LazyProperty
+    def _cuda_bin_dir(self):
+        return os.path.join(self._cuda_sdk_root, "bin")
 
 
-def __cuda_run_nvcc_command(conanfile, cuda_sdk_root, command):
-    nvcc_executable = __cuda_get_nvcc_filename(cuda_sdk_root)
-    output = StringIO()
-    conanfile.output.info('running command: "{0}" {1}'.format(nvcc_executable, cmd))
-    conanfile.run('"{0}" {1}'.format(nvcc_executable, cmd), output=output, run_environment=True)
-    result = output.getvalue().strip()
-    return result if result and result != "" else None
+    @LazyProperty
+    def _cuda_lib_dir(self):
+        return os.path.join(self._cuda_sdk_root, "lib")
 
 
-def __cuda_check_sdk_version(conanfile, cuda_sdk_root, cuda_version):
-    cmd = "--version"
-    result = __cuda_run_nvcc_command(cuda_sdk_root, cmd)
-    match = re.match( r".*, (\w+) ({}).*".format( cuda_version ), result.splitlines()[3])
-    result = True
-    if match:
-        vt, version = match.groups()
-        if vt == 'release':
-            if version != cuda_version:
-                result = False
-                conanfile.output.error("Invalid CUDA SDK version found: {0} expected: {1}".format(version, cuda_version))
+    @LazyProperty
+    def _cuda_include_dir(self):
+        return os.path.join(self._cuda_sdk_root, "include")
 
-    if not os.path.exists(os.path.join(cuda_sdk_root, "include", 'cuda.h')):
-        result = False
-        conanfile.output.error("Missing cuda.h in CUDA SDK root: {0}".format(cuda_sdk_root))
+    # internal methods
 
-    return False
+    def __cuda_get_sdk_root_and_version(self, cuda_version=None):
+        cuda_sdk_root = None
+        cuda_version_found = None
+
+        supported_versions = reversed(v for v in get_cuda_version() if v != 'None')
+        find_cuda_versions = []
+        if cuda_version is not None:
+            if cuda_version not in supported_versions:
+                raise ValueError("Unsupported CUDA SDK Version requested: {0}".format(cuda_version))
+            find_cuda_versions = [cuda_version,]
+        else:
+            find_cuda_versions = supported_versions
+
+
+        if tools.os_info.is_linux:
+            for cv in find_cuda_versions:
+                cuda_sdk_root = "/usr/local/cuda-{0}".format(cv)
+                if os.path.exists(cuda_sdk_root):
+                    cuda_sdk_root = cuda_sdk_root
+                    cuda_version_found = cv
+                    break
+        if tools.os_info.is_windows:
+            default_path = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v{}"
+            for version in find_cuda_versions:
+                cuda_sdk_root = default_path.format(version)
+                if os.path.exists(cuda_sdk_root):
+                    cuda_sdk_root = cuda_sdk_root
+                    cuda_version_found = cv
+                    break
+        if cuda_sdk_root is None or cuda_version_found is None:
+            raise ValueError("Could not find CUDA Sdk version: {0}".format(cuda_version or "ANY"))
+
+        self.output.log("Found CUDA SDK {0} at: {1}".format(cuda_version_found, cuda_sdk_root))
+        return cuda_sdk_root, cuda_version_found
+
+
+    def __cuda_get_nvcc_filename(self, cuda_sdk_root):
+        return os.path.join(cuda_sdk_root, 'bin', 'nvcc')
+
+
+    def __cuda_run_nvcc_command(self, cuda_sdk_root, command):
+        nvcc_executable = self.__cuda_get_nvcc_filename(cuda_sdk_root)
+        output = StringIO()
+        self.output.info('running command: "{0}" {1}'.format(nvcc_executable, command))
+        self.run('"{0}" {1}'.format(nvcc_executable, command), output=output, run_environment=True)
+        result = output.getvalue().strip()
+        return result if result and result != "" else None
+
+
+
+    def __cuda_get_sdk_version(self, cuda_sdk_root):
+        cmd = "--version"
+        result = self.__cuda_run_nvcc_command(cuda_sdk_root, cmd)
+        match = re.match( r"^.*\, release\s(\S+)\,.*$", result.splitlines()[3])
+        success = True
+        if match:
+            version = match.groups()[0]
+            self.output.info("Found CUDA SDK Version {0}".format(version))
+            return version
+        return None
+
+
+    def __cuda_check_sdk_version(self, cuda_sdk_root, cuda_version):
+        version = self.__cuda_get_sdk_version(cuda_sdk_root)
+        if version != cuda_version:
+            self.output.error("Invalid CUDA SDK version found: {0} expected: {1}".format(version, cuda_version))
+            return False
+        return True
 
 
 
