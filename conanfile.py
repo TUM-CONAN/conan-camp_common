@@ -7,6 +7,8 @@ import re
 
 from conans import tools
 from conans import ConanFile
+from conans import CMake
+
 from fnmatch import fnmatch
 from pathlib import Path
 from functools import update_wrapper
@@ -670,6 +672,77 @@ class CampPythonBase(object):
             raise RuntimeError("Error while executing python command.")
 
 
+
+
+
+#
+# CMake default implementation
+#
+
+
+# reusable code for ConanFile
+class CampCMakeBase(object):
+    """
+    BaseClass for Conan PythonRequires for packages that build with cmake.
+    """
+
+    source_subfolder = None
+    build_subfolder = None
+
+    def _configure_cmake(self):
+        cmake = CMake(self)
+        cmake.verbose = True
+
+        def add_cmake_option(option, value):
+            var_name = "{}".format(option).upper()
+            value_str = "{}".format(value)
+            var_value = "ON" if value_str == 'True' else "OFF" if value_str == 'False' else value_str
+            cmake.definitions[var_name] = var_value
+
+        for option, value in self.options.items():
+            add_cmake_option(option, value)
+
+        cmake.configure(source_folder=self.source_subfolder, build_folder=self.build_subfolder)
+        return cmake
+
+    def build(self):
+        self._before_configure()
+        cmake = self._configure_cmake()
+        self._before_build(cmake)
+        cmake.build()
+        self._after_build()
+
+    def package(self):
+        cmake = self._configure_cmake()
+        self._before_package(cmake)
+        cmake.install()
+        self._after_package()
+
+    def package_info(self):
+        self.cpp_info.libs = tools.collect_libs(self)
+        self._after_package_info()
+
+
+
+    # customization points
+
+    def _before_configure(self):
+        pass
+
+    def _before_build(self, cmake):
+        pass
+
+    def _after_build(self):
+        pass
+
+    def _before_package(self, cmake):
+        pass
+
+    def _after_package(self):
+        pass
+
+    def _after_package_info(self):
+        pass
 
 class CommonConan(ConanFile):
     name = 'camp_common'
