@@ -410,10 +410,21 @@ def fix_conan_path(
 # Baseclass for CUDA Dependency
 #
 
+## somehow exporting does not provide access to package options
+# so defining cuda_root only works with conan create, but not conan export ..
+CUDA_ROOT_DEFAULT = None
+if tools.os_info.is_windows:
+    CUDA_ROOT_DEFAULT = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.1"
+elif tools.os_info.is_linux:
+    CUDA_ROOT_DEFAULT = "/usr/local/cuda-11.1"
+
 # reusable code for ConanFile
 class CampCudaBase(object):
     """
     BaseClass for Conan PythonRequires for packages that have a cuda dependency.
+
+    only use these methods in one of:  validate(), build(), package(), package_info()
+
     Expects two options: 
     'cuda_version': requested CUDA Version
     'cuda_root': path to cuda sdk root directory
@@ -421,13 +432,12 @@ class CampCudaBase(object):
 
     @LazyProperty
     def _cuda_sdk_root(self):
-        cuda_version = None
-        cuda_root = None
-        if 'cuda_version' in self.options:
-            cuda_version = str(self.options.cuda_version)
-
-        if 'cuda_root' in self.options:
-            cuda_root = str(self.options.cuda_root)
+        cuda_version = str(self.options.get_safe("cuda_version", "ANY"))
+        cuda_root = str(self.options.get_safe("cuda_root", "ANY"))
+        if cuda_root == "ANY":
+            cuda_root = None
+        if cuda_version == "ANY":
+            cuda_version = None
         
         if cuda_root is None:
             cuda_root, cv = self.__cuda_get_sdk_root_and_version(cuda_version)
@@ -436,8 +446,10 @@ class CampCudaBase(object):
             if cuda_version is None:
                 cuda_version = cv
             if cuda_root is None:
-                raise RuntimeError("No suitable CUDA SDK Root directory found.")
-        elif cuda_version is not None:
+                cuda_root = CUDA_ROOT_DEFAULT
+        
+
+        if cuda_version is not None:
             if not self.__cuda_check_sdk_version(cuda_root, cuda_version):
                 raise RuntimeError("No suitable CUDA SDK Root directory found - cuda_check_sdk_version failed.")
 
@@ -471,7 +483,7 @@ class CampCudaBase(object):
         cuda_sdk_root = None
         cuda_version_found = None
 
-        supported_versions = reversed(v for v in get_cuda_version() if v != 'None')
+        supported_versions = reversed([v for v in get_cuda_version() if v != 'None'])
         find_cuda_versions = []
         if cuda_version is not None:
             if cuda_version not in supported_versions:
@@ -494,12 +506,12 @@ class CampCudaBase(object):
                 cuda_sdk_root = default_path.format(version)
                 if os.path.exists(cuda_sdk_root):
                     cuda_sdk_root = cuda_sdk_root
-                    cuda_version_found = cv
+                    cuda_version_found = version
                     break
         if cuda_sdk_root is None or cuda_version_found is None:
             raise ValueError("Could not find CUDA Sdk version: {0}".format(cuda_version or "ANY"))
 
-        self.output.log("Found CUDA SDK {0} at: {1}".format(cuda_version_found, cuda_sdk_root))
+        self.output.info("Found CUDA SDK {0} at: {1}".format(cuda_version_found, cuda_sdk_root))
         return cuda_sdk_root, cuda_version_found
 
 
@@ -508,6 +520,8 @@ class CampCudaBase(object):
 
 
     def __cuda_run_nvcc_command(self, cuda_sdk_root, command):
+        if cuda_sdk_root is None:
+            raise ValueError("Invalid CUDA SDK root: None")
         nvcc_executable = self.__cuda_get_nvcc_filename(cuda_sdk_root)
         output = StringIO()
         self.output.info('running command: "{0}" {1}'.format(nvcc_executable, command))
@@ -530,6 +544,8 @@ class CampCudaBase(object):
 
 
     def __cuda_check_sdk_version(self, cuda_sdk_root, cuda_version):
+        if cuda_sdk_root is None:
+            raise ValueError("Invalid CUDA SDK root: None")
         version = self.__cuda_get_sdk_version(cuda_sdk_root)
         if version != cuda_version:
             self.output.error("Invalid CUDA SDK version found: {0} expected: {1}".format(version, cuda_version))
@@ -547,6 +563,9 @@ class CampCudaBase(object):
 class CampPythonBase(object):
     """
     BaseClass for Conan PythonRequires for packages that have a python dependency.
+
+    only use these methods in one of:  validate(), build(), package(), package_info()
+    
     Expects two options: 
     'python': name and or path to python interpreter
     'with_system_python': flag to state if system python should be used
