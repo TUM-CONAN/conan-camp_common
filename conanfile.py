@@ -112,7 +112,10 @@ def get_release_cxx_flags(**kwargs):
 
 def get_debug_c_flags(**kwargs):
     if kwargs.get('is_posix', tools.os_info.is_posix):
-        return '-Og -g -D_DEBUG'
+        if kwargs.get('compiler', None) == "nvcc":
+            return '-O0 -g -D_DEBUG'
+        else:
+            return '-Og -g -D_DEBUG'
     elif kwargs.get('is_windows', tools.os_info.is_windows):
         return '/Ox /Oy- /Ob1 /Z7 /MDd /D_DEBUG'
     else:
@@ -285,7 +288,7 @@ def generate_cmake_wrapper(**kwargs):
 
             # Propagate host CXX flags
             host_cxx_flags = ",\\\""
-            host_cxx_flags += get_full_cxx_flags(build_type=build_type).replace(' ', "\\\",\\\"")
+            host_cxx_flags += get_full_cxx_flags(build_type=build_type, compiler="nvcc").replace(' ', "\\\",\\\"")
             host_cxx_flags += "\\\""
 
             cmake_wrapper.write(
@@ -314,11 +317,11 @@ def generate_cmake_wrapper(**kwargs):
 # CUDA Defaults
 #
 def get_cuda_version():
-    return ['9.2', '10.0', '10.1', '10.2', '11.0', '11.1', '11.2', '11.4', '11.5', '11.6', '11.7', 'None']
+    return ['11.0', '11.1', '11.2', '11.4', '11.5', '11.6', '11.7', 'None']
 
 
 def get_cuda_arch():
-    return ['5.0', '5.2', '6.0', '6.1', '7.0', '7.2', '7.5', '8.0', '8.6', '8.7', '9.0']
+    return ['6.0', '6.1', '7.0', '7.2', '7.5', '8.0', '8.6', '8.7', '9.0']
 
 
 
