@@ -250,6 +250,11 @@ def generate_cmake_wrapper(**kwargs):
         elif build_type == 'debug':
             # Add debug flags
             debug_flags = get_debug_cxx_flags()
+
+            # special case if cuda is enabled (fails for nvcc 11.7 and pcl 1.12.1)
+            if kwargs.get('setup_cuda', False):
+                debug_flags = debug_flags.replace("-Og ", "")
+
             cmake_wrapper.write(
                 'add_compile_options(' + debug_flags + ')\n'
             )
@@ -264,6 +269,7 @@ def generate_cmake_wrapper(**kwargs):
                 cmake_wrapper.write(
                     'string(REGEX REPLACE "/RTC[1csu]+" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")\n'
                 )
+
         elif build_type == 'relwithdebinfo':
             # Add relwithdebinfo flags
             cmake_wrapper.write(
