@@ -225,66 +225,66 @@ def generate_cmake_wrapper(**kwargs):
         cmake_wrapper.write('endif()\n')
         cmake_wrapper.write('conan_basic_setup()\n')
 
-        # Add common flags
-        cmake_wrapper.write(
-            'add_compile_options(' + get_cxx_flags() + ')\n'
-        )
-
-        # Disable warnings and error because of warnings
-        cmake_wrapper.write(
-            'add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/W0;/WX->")\n'
-        )
-
-        cmake_wrapper.write(
-            'add_compile_options("$<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-w;-Wno-error>")\n'
-        )
-
-        # Get build type, defaulting to debug
-        build_type = str(kwargs.get('build_type', 'debug')).lower()
-
-        if build_type == 'release':
-            # Add release flags
+        if not kwargs.get("create_minimal_wrapper", False):
+            # Add common flags
             cmake_wrapper.write(
-                'add_compile_options(' + get_release_cxx_flags() + ')\n'
-            )
-        elif build_type == 'debug':
-            # Add debug flags
-            debug_flags = get_debug_cxx_flags()
-
-            # special case if cuda is enabled (fails for nvcc 11.7 and pcl 1.12.1)
-            if kwargs.get('setup_cuda', False):
-                debug_flags = debug_flags.replace("-Og ", "")
-
-            cmake_wrapper.write(
-                'add_compile_options(' + debug_flags + ')\n'
+                'add_compile_options(' + get_cxx_flags() + ')\n'
             )
 
-            # Special case on windows, which doesn't support mixing /Ox with /RTC1
-            if tools.os_info.is_windows and (
-                '/O1' in debug_flags or '/O2' in debug_flags or '/Ox' in debug_flags
-            ):
+            # Disable warnings and error because of warnings
+            cmake_wrapper.write(
+                'add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/W0;/WX->")\n'
+            )
+
+            cmake_wrapper.write(
+                'add_compile_options("$<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-w;-Wno-error>")\n'
+            )
+
+            # Get build type, defaulting to debug
+            build_type = str(kwargs.get('build_type', 'debug')).lower()
+
+            if build_type == 'release':
+                # Add release flags
                 cmake_wrapper.write(
-                    'string(REGEX REPLACE "/RTC[1csu]+" "" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")\n'
+                    'add_compile_options(' + get_release_cxx_flags() + ')\n'
                 )
+            elif build_type == 'debug':
+                # Add debug flags
+                debug_flags = get_debug_cxx_flags()
+
+                # special case if cuda is enabled (fails for nvcc 11.7 and pcl 1.12.1)
+                if kwargs.get('setup_cuda', False):
+                    debug_flags = debug_flags.replace("-Og ", "")
+
                 cmake_wrapper.write(
-                    'string(REGEX REPLACE "/RTC[1csu]+" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")\n'
+                    'add_compile_options(' + debug_flags + ')\n'
                 )
 
-        elif build_type == 'relwithdebinfo':
-            # Add relwithdebinfo flags
-            cmake_wrapper.write(
-                'add_compile_options(' + get_relwithdebinfo_cxx_flags() + ')\n'
-            )
+                # Special case on windows, which doesn't support mixing /Ox with /RTC1
+                if tools.os_info.is_windows and (
+                    '/O1' in debug_flags or '/O2' in debug_flags or '/Ox' in debug_flags
+                ):
+                    cmake_wrapper.write(
+                        'string(REGEX REPLACE "/RTC[1csu]+" "" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")\n'
+                    )
+                    cmake_wrapper.write(
+                        'string(REGEX REPLACE "/RTC[1csu]+" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")\n'
+                    )
 
-        # Write CUDA specific code
-        setup_cuda = kwargs.get('setup_cuda', False)
+            elif build_type == 'relwithdebinfo':
+                # Add relwithdebinfo flags
+                cmake_wrapper.write(
+                    'add_compile_options(' + get_relwithdebinfo_cxx_flags() + ')\n'
+                )
 
-        if setup_cuda:
-            cmake_wrapper.write(
-                'find_package(CUDA)\n'
-            )
+            # Write CUDA specific code
+            setup_cuda = kwargs.get('setup_cuda', False)
 
-            if kwargs.get('cuda_set_architectures', True):
+            if setup_cuda:
+                cmake_wrapper.write(
+                    'find_package(CUDA)\n'
+                )
+
                 cuda_arch_list = get_cuda_arch()
                 if "filter_cuda_arch" in kwargs:
                     cuda_arch_list = kwargs["filter_cuda_arch"](cuda_arch_list)
@@ -297,7 +297,6 @@ def generate_cmake_wrapper(**kwargs):
                     'LIST(APPEND CUDA_NVCC_FLAGS ${ARCH_FLAGS})\n'
                 )
 
-            if kwargs.get('cuda_propagate_host_flags', True):
                 # Propagate host CXX flags
                 host_cxx_flags = ",\\\""
                 host_cxx_flags += get_full_cxx_flags(build_type=build_type, compiler="nvcc").replace(' ', "\\\",\\\"")
