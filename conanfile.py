@@ -284,22 +284,28 @@ def generate_cmake_wrapper(**kwargs):
                 'find_package(CUDA)\n'
             )
 
-            cmake_wrapper.write(
-                'CUDA_SELECT_NVCC_ARCH_FLAGS(ARCH_FLAGS ' + ' '.join(get_cuda_arch()) + ')\n'
-            )
+            if kwargs.get('cuda_set_architectures', True):
+                cuda_arch_list = get_cuda_arch()
+                if "filter_cuda_arch" in kwargs:
+                    cuda_arch_list = kwargs["filter_cuda_arch"](cuda_arch_list)
 
-            cmake_wrapper.write(
-                'LIST(APPEND CUDA_NVCC_FLAGS ${ARCH_FLAGS})\n'
-            )
+                cmake_wrapper.write(
+                    'CUDA_SELECT_NVCC_ARCH_FLAGS(ARCH_FLAGS ' + ' '.join(cuda_arch_list) + ')\n'
+                )
 
-            # Propagate host CXX flags
-            host_cxx_flags = ",\\\""
-            host_cxx_flags += get_full_cxx_flags(build_type=build_type, compiler="nvcc").replace(' ', "\\\",\\\"")
-            host_cxx_flags += "\\\""
+                cmake_wrapper.write(
+                    'LIST(APPEND CUDA_NVCC_FLAGS ${ARCH_FLAGS})\n'
+                )
 
-            cmake_wrapper.write(
-                'LIST(APPEND CUDA_NVCC_FLAGS -Xcompiler ' + host_cxx_flags + ')\n'
-            )
+            if kwargs.get('cuda_propagate_host_flags', True):
+                # Propagate host CXX flags
+                host_cxx_flags = ",\\\""
+                host_cxx_flags += get_full_cxx_flags(build_type=build_type, compiler="nvcc").replace(' ', "\\\",\\\"")
+                host_cxx_flags += "\\\""
+
+                cmake_wrapper.write(
+                    'LIST(APPEND CUDA_NVCC_FLAGS -Xcompiler ' + host_cxx_flags + ')\n'
+                )
 
         # Write additional options
         additional_options = kwargs.get('additional_options', None)
