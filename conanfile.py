@@ -388,13 +388,30 @@ class CampCudaBase(object):
 
     @LazyProperty
     def _cuda_lib_dir(self):
-        return os.path.join(self._cuda_sdk_root, "lib")
+        return os.path.join(self._cuda_sdk_root, "lib64")
 
     @LazyProperty
     def _cuda_include_dir(self):
         return os.path.join(self._cuda_sdk_root, "include")
 
     # internal methods
+
+    @property
+    def _dynamic_lib_sufix(self):
+        return "dylib" if self.settings.os == "Macos" else "so"
+
+    @property
+    def _cuda_runtime_dynamic_ldname(self):
+        return "cudart.dll" if self.settings.os == "Windows" else "libcudart.{}".format(self._dynamic_lib_sufix)
+
+    @property
+    def _cuda_runtime_static_ldname(self):
+        return "cudart_static.lib" if self.settings.os == "Windows" else "libcudart_static.a"
+
+    @property
+    def _cuda_runtime_ldname(self):
+        return self._cuda_runtime_dynamic_ldname if self.options.get_safe("shared") else self._cuda_runtime_static_ldname
+
     def __cuda_get_sdk_root_and_version(self, cuda_version=None):
         cuda_sdk_root = None
         cuda_version_found = None
