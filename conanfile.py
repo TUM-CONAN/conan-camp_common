@@ -2,24 +2,19 @@
 # -*- coding: utf-8 -*-
 
 import os
-import shutil
 import re
 
-from conans import tools
-from conans import ConanFile
-from conans import CMake
+from conan import ConanFile
+from conan.tools.cmake import CMake, CMakeToolchain, cmake_layout, CMakeDeps
+from conan.tools.files import collect_libs
 
-from fnmatch import fnmatch
-from pathlib import Path
 from functools import update_wrapper
+import platform
 
 try:
     from cStringIO import StringIO
 except ImportError:
     from io import StringIO
-
-
-
 
 
 # Utilities
@@ -52,34 +47,30 @@ class LazyProperty(property):
         return result
 
 
-
-
-
 # global module utility functions
 
 #
 # CMAKE Default Config
 #
 def get_c_flags(**kwargs):
-    if kwargs.get('is_posix', tools.os_info.is_posix):
-        if kwargs.get('is_macos', tools.os_info.is_macos):
-            # Our old macos CI is done on a old E5620 Intel(R) Xeon(R) CPU, which doesn't support AVX and f16c
-            # CPU with 64-bit extensions, MMX, SSE, SSE2, SSE3, SSSE3, SSE4.1, SSE4.2,
-            # POPCNT, AES and PCLMUL instruction set support.
-            flags = '-march=westmere'
-            flags += ' -mtune=intel'
-            flags += ' -mfpmath=sse'
-            flags += ' -arch x86_64'
-            flags += ' -mmacosx-version-min=10.14'
-            flags += ' -DGL_SILENCE_DEPRECATION'
-            return flags
-        else:
-            # CPU with 64-bit extensions, MMX, SSE, SSE2, SSE3, SSSE3, SSE4.1, SSE4.2,
-            # POPCNT, AVX, AES, PCLMUL, FSGSBASE instruction set support.
-            flags = '-march=sandybridge'
-            flags += ' -mtune=generic'
-            flags += ' -mfpmath=sse'
-            return flags
+    if kwargs.get('is_posix', platform.system() == "Linux"):
+        # CPU with 64-bit extensions, MMX, SSE, SSE2, SSE3, SSSE3, SSE4.1, SSE4.2,
+        # POPCNT, AVX, AES, PCLMUL, FSGSBASE instruction set support.
+        flags = '-march=sandybridge'
+        flags += ' -mtune=generic'
+        flags += ' -mfpmath=sse'
+        return flags
+    elif kwargs.get('is_macos', platform.system() == "Darwin"):
+        # Our old macos CI is done on a old E5620 Intel(R) Xeon(R) CPU, which doesn't support AVX and f16c
+        # CPU with 64-bit extensions, MMX, SSE, SSE2, SSE3, SSSE3, SSE4.1, SSE4.2,
+        # POPCNT, AES and PCLMUL instruction set support.
+        flags = '-march=westmere'
+        flags += ' -mtune=intel'
+        flags += ' -mfpmath=sse'
+        flags += ' -arch x86_64'
+        flags += ' -mmacosx-version-min=10.14'
+        flags += ' -DGL_SILENCE_DEPRECATION'
+        return flags
     else:
         # Windows flags..
         flags = '/favor:blend'
@@ -98,9 +89,9 @@ def get_cxx_flags(**kwargs):
 
 
 def get_release_c_flags(**kwargs):
-    if kwargs.get('is_posix', tools.os_info.is_posix):
+    if kwargs.get('is_posix', platform.system() == "Linux"):
         return '-O3 -fomit-frame-pointer -DNDEBUG'
-    elif kwargs.get('is_windows', tools.os_info.is_windows):
+    elif kwargs.get('is_windows', platform.system() == "Windows"):
         return '/O2 /Ob2 /MD /DNDEBUG'
     else:
         return ''
@@ -111,12 +102,12 @@ def get_release_cxx_flags(**kwargs):
 
 
 def get_debug_c_flags(**kwargs):
-    if kwargs.get('is_posix', tools.os_info.is_posix):
+    if kwargs.get('is_posix', platform.system() == "Linux"):
         if kwargs.get('compiler', None) == "nvcc":
             return '-O0 -g -D_DEBUG'
         else:
             return '-Og -g -D_DEBUG'
-    elif kwargs.get('is_windows', tools.os_info.is_windows):
+    elif kwargs.get('is_windows', platform.system() == "Windows"):
         return '/Ox /Oy- /Ob1 /Z7 /MDd /D_DEBUG'
     else:
         return ''
@@ -127,9 +118,9 @@ def get_debug_cxx_flags(**kwargs):
 
 
 def get_relwithdebinfo_c_flags(**kwargs):
-    if kwargs.get('is_posix', tools.os_info.is_posix):
+    if kwargs.get('is_posix', platform.system() == "Linux"):
         return '-O3 -g -DNDEBUG'
-    elif kwargs.get('is_windows', tools.os_info.is_windows):
+    elif kwargs.get('is_windows', platform.system() == "Windows"):
         return get_release_c_flags(**kwargs) + ' /Z7'
     else:
         return ''
@@ -140,9 +131,9 @@ def get_relwithdebinfo_cxx_flags(**kwargs):
 
 
 def get_thorough_debug_c_flags(**kwargs):
-    if kwargs.get('is_posix', tools.os_info.is_posix):
+    if kwargs.get('is_posix', platform.system() == "Linux"):
         return '-O0 -g3 -D_DEBUG'
-    elif kwargs.get('is_windows', tools.os_info.is_windows):
+    elif kwargs.get('is_windows', platform.system() == "Windows"):
         return '/Od /Ob0 /RTC1 /sdl /Z7 /MDd /D_DEBUG'
     else:
         return ''
@@ -170,267 +161,183 @@ def get_full_cxx_flags(**kwargs):
     return get_full_c_flags(**kwargs)
 
 #
-# CMake project wrapper
+# CMake project wrapper [not needed - here for reference of cmake modifications ...]
 #
-def generate_cmake_wrapper(**kwargs):
-    # Get the cmake wrapper path
-    cmakelists_path = kwargs.get('cmakelists_path', 'CMakeLists.txt')
-    cmakelists_exists = Path(cmakelists_path).is_file()
-
-    # If there is an existing CMakeLists.txt, because of some strange package like libsgm, we must rename it
-    if cmakelists_exists:
-        shutil.move(cmakelists_path, cmakelists_path + '.upstream')
-
-    # Write the file content
-    with open(cmakelists_path, 'w') as cmake_wrapper:
-        cmake_wrapper.write('cmake_minimum_required(VERSION 3.15)\n')
-
-        # New policies management. It must be done before 'project(cmake_wrapper)'
-        new_policies = kwargs.get('new_policies', None)
-        if new_policies:
-            for new_policy in new_policies:
-                cmake_wrapper.write("cmake_policy(SET {0} NEW)\n".format(new_policy))
-
-        # Old policies management. It must be done before 'project(cmake_wrapper)'
-        old_policies = kwargs.get('old_policies', None)
-        if old_policies:
-            for old_policy in old_policies:
-                cmake_wrapper.write("cmake_policy(SET {0} OLD)\n".format(old_policy))
-
-        cmake_wrapper.write('project(cmake_wrapper)\n')
-        cmake_wrapper.write(
-            'if(EXISTS "${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")\n'
-        )
-        cmake_wrapper.write(
-            '   include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)\n'
-        )
-        cmake_wrapper.write(
-            'elseif(EXISTS "${CMAKE_BINARY_DIR}/../conanbuildinfo.cmake")\n'
-        )
-        cmake_wrapper.write(
-            '   include(${CMAKE_BINARY_DIR}/../conanbuildinfo.cmake)\n'
-        )
-        cmake_wrapper.write(
-            'elseif(EXISTS "${CMAKE_BINARY_DIR}/../../conanbuildinfo.cmake")\n'
-        )
-        cmake_wrapper.write(
-            '   include(${CMAKE_BINARY_DIR}/../../conanbuildinfo.cmake)\n'
-        )
-        cmake_wrapper.write(
-            'elseif(EXISTS "${CMAKE_BINARY_DIR}/../../../conanbuildinfo.cmake")\n'
-        )
-        cmake_wrapper.write(
-            '   include(${CMAKE_BINARY_DIR}/../../../conanbuildinfo.cmake)\n'
-        )
-        cmake_wrapper.write('endif()\n')
-        cmake_wrapper.write('conan_basic_setup()\n')
-
-        if not kwargs.get("create_minimal_wrapper", False):
-            # Add common flags
-            cmake_wrapper.write(
-                'add_compile_options(' + get_cxx_flags() + ')\n'
-            )
-
-            # Disable warnings and error because of warnings
-            cmake_wrapper.write(
-                'add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/W0;/WX->")\n'
-            )
-
-            cmake_wrapper.write(
-                'add_compile_options("$<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-w;-Wno-error>")\n'
-            )
-
-            # Get build type, defaulting to debug
-            build_type = str(kwargs.get('build_type', 'debug')).lower()
-
-            if build_type == 'release':
-                # Add release flags
-                cmake_wrapper.write(
-                    'add_compile_options(' + get_release_cxx_flags() + ')\n'
-                )
-            elif build_type == 'debug':
-                # Add debug flags
-                debug_flags = get_debug_cxx_flags()
-
-                # special case if cuda is enabled (fails for nvcc 11.7 and pcl 1.12.1)
-                if kwargs.get('setup_cuda', False):
-                    debug_flags = debug_flags.replace("-Og ", "")
-
-                cmake_wrapper.write(
-                    'add_compile_options(' + debug_flags + ')\n'
-                )
-
-                # Special case on windows, which doesn't support mixing /Ox with /RTC1
-                if tools.os_info.is_windows and (
-                    '/O1' in debug_flags or '/O2' in debug_flags or '/Ox' in debug_flags
-                ):
-                    cmake_wrapper.write(
-                        'string(REGEX REPLACE "/RTC[1csu]+" "" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")\n'
-                    )
-                    cmake_wrapper.write(
-                        'string(REGEX REPLACE "/RTC[1csu]+" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")\n'
-                    )
-
-            elif build_type == 'relwithdebinfo':
-                # Add relwithdebinfo flags
-                cmake_wrapper.write(
-                    'add_compile_options(' + get_relwithdebinfo_cxx_flags() + ')\n'
-                )
-
-            # Write CUDA specific code
-            setup_cuda = kwargs.get('setup_cuda', False)
-
-            if setup_cuda:
-                cmake_wrapper.write(
-                    'find_package(CUDA)\n'
-                )
-
-                cuda_arch_list = get_cuda_arch()
-                if "filter_cuda_arch" in kwargs:
-                    cuda_arch_list = kwargs["filter_cuda_arch"](cuda_arch_list)
-
-                cmake_wrapper.write(
-                    'CUDA_SELECT_NVCC_ARCH_FLAGS(ARCH_FLAGS ' + ' '.join(cuda_arch_list) + ')\n'
-                )
-
-                cmake_wrapper.write(
-                    'LIST(APPEND CUDA_NVCC_FLAGS ${ARCH_FLAGS})\n'
-                )
-
-                # Propagate host CXX flags
-                host_cxx_flags = ",\\\""
-                host_cxx_flags += get_full_cxx_flags(build_type=build_type, compiler="nvcc").replace(' ', "\\\",\\\"")
-                host_cxx_flags += "\\\""
-
-                cmake_wrapper.write(
-                    'LIST(APPEND CUDA_NVCC_FLAGS -Xcompiler ' + host_cxx_flags + ')\n'
-                )
-
-        # Write additional options
-        additional_options = kwargs.get('additional_options', None)
-        if additional_options:
-            cmake_wrapper.write(additional_options + '\n')
-
-        # Write the original subdirectory / include
-        if cmakelists_exists:
-            cmake_wrapper.write('include("CMakeLists.txt.upstream")\n')
-        else:
-            source_subfolder = kwargs.get(
-                'source_subfolder', 'source_subfolder'
-            )
-            cmake_wrapper.write(
-                'add_subdirectory("' + source_subfolder + '")\n'
-            )
-
+# def generate_cmake_wrapper(**kwargs):
+#     # Get the cmake wrapper path
+#     cmakelists_path = kwargs.get('cmakelists_path', 'CMakeLists.txt')
+#     cmakelists_exists = Path(cmakelists_path).is_file()
+#
+#     # If there is an existing CMakeLists.txt, because of some strange package like libsgm, we must rename it
+#     if cmakelists_exists:
+#         shutil.move(cmakelists_path, cmakelists_path + '.upstream')
+#
+#     # Write the file content
+#     with open(cmakelists_path, 'w') as cmake_wrapper:
+#         cmake_wrapper.write('cmake_minimum_required(VERSION 3.15)\n')
+#
+#         # New policies management. It must be done before 'project(cmake_wrapper)'
+#         new_policies = kwargs.get('new_policies', None)
+#         if new_policies:
+#             for new_policy in new_policies:
+#                 cmake_wrapper.write("cmake_policy(SET {0} NEW)\n".format(new_policy))
+#
+#         # Old policies management. It must be done before 'project(cmake_wrapper)'
+#         old_policies = kwargs.get('old_policies', None)
+#         if old_policies:
+#             for old_policy in old_policies:
+#                 cmake_wrapper.write("cmake_policy(SET {0} OLD)\n".format(old_policy))
+#
+#         cmake_wrapper.write('project(cmake_wrapper)\n')
+#         cmake_wrapper.write(
+#             'if(EXISTS "${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")\n'
+#         )
+#         cmake_wrapper.write(
+#             '   include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)\n'
+#         )
+#         cmake_wrapper.write(
+#             'elseif(EXISTS "${CMAKE_BINARY_DIR}/../conanbuildinfo.cmake")\n'
+#         )
+#         cmake_wrapper.write(
+#             '   include(${CMAKE_BINARY_DIR}/../conanbuildinfo.cmake)\n'
+#         )
+#         cmake_wrapper.write(
+#             'elseif(EXISTS "${CMAKE_BINARY_DIR}/../../conanbuildinfo.cmake")\n'
+#         )
+#         cmake_wrapper.write(
+#             '   include(${CMAKE_BINARY_DIR}/../../conanbuildinfo.cmake)\n'
+#         )
+#         cmake_wrapper.write(
+#             'elseif(EXISTS "${CMAKE_BINARY_DIR}/../../../conanbuildinfo.cmake")\n'
+#         )
+#         cmake_wrapper.write(
+#             '   include(${CMAKE_BINARY_DIR}/../../../conanbuildinfo.cmake)\n'
+#         )
+#         cmake_wrapper.write('endif()\n')
+#         cmake_wrapper.write('conan_basic_setup()\n')
+#
+#         if not kwargs.get("create_minimal_wrapper", False):
+#             # Add common flags
+#             cmake_wrapper.write(
+#                 'add_compile_options(' + get_cxx_flags() + ')\n'
+#             )
+#
+#             # Disable warnings and error because of warnings
+#             cmake_wrapper.write(
+#                 'add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/W0;/WX->")\n'
+#             )
+#
+#             cmake_wrapper.write(
+#                 'add_compile_options("$<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-w;-Wno-error>")\n'
+#             )
+#
+#             # Get build type, defaulting to debug
+#             build_type = str(kwargs.get('build_type', 'debug')).lower()
+#
+#             if build_type == 'release':
+#                 # Add release flags
+#                 cmake_wrapper.write(
+#                     'add_compile_options(' + get_release_cxx_flags() + ')\n'
+#                 )
+#             elif build_type == 'debug':
+#                 # Add debug flags
+#                 debug_flags = get_debug_cxx_flags()
+#
+#                 # special case if cuda is enabled (fails for nvcc 11.7 and pcl 1.12.1)
+#                 if kwargs.get('setup_cuda', False):
+#                     debug_flags = debug_flags.replace("-Og ", "")
+#
+#                 cmake_wrapper.write(
+#                     'add_compile_options(' + debug_flags + ')\n'
+#                 )
+#
+#                 # Special case on windows, which doesn't support mixing /Ox with /RTC1
+#                 if platform.system() == "Windows" and (
+#                     '/O1' in debug_flags or '/O2' in debug_flags or '/Ox' in debug_flags
+#                 ):
+#                     cmake_wrapper.write(
+#                         'string(REGEX REPLACE "/RTC[1csu]+" "" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")\n'
+#                     )
+#                     cmake_wrapper.write(
+#                         'string(REGEX REPLACE "/RTC[1csu]+" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")\n'
+#                     )
+#
+#             elif build_type == 'relwithdebinfo':
+#                 # Add relwithdebinfo flags
+#                 cmake_wrapper.write(
+#                     'add_compile_options(' + get_relwithdebinfo_cxx_flags() + ')\n'
+#                 )
+#
+#             # Write CUDA specific code
+#             setup_cuda = kwargs.get('setup_cuda', False)
+#
+#             if setup_cuda:
+#                 cmake_wrapper.write(
+#                     'find_package(CUDA)\n'
+#                 )
+#
+#                 cuda_arch_list = get_cuda_arch()
+#                 if "filter_cuda_arch" in kwargs:
+#                     cuda_arch_list = kwargs["filter_cuda_arch"](cuda_arch_list)
+#
+#                 cmake_wrapper.write(
+#                     'CUDA_SELECT_NVCC_ARCH_FLAGS(ARCH_FLAGS ' + ' '.join(cuda_arch_list) + ')\n'
+#                 )
+#
+#                 cmake_wrapper.write(
+#                     'LIST(APPEND CUDA_NVCC_FLAGS ${ARCH_FLAGS})\n'
+#                 )
+#
+#                 # Propagate host CXX flags
+#                 host_cxx_flags = ",\\\""
+#                 host_cxx_flags += get_full_cxx_flags(build_type=build_type, compiler="nvcc").replace(' ', "\\\",\\\"")
+#                 host_cxx_flags += "\\\""
+#
+#                 cmake_wrapper.write(
+#                     'LIST(APPEND CUDA_NVCC_FLAGS -Xcompiler ' + host_cxx_flags + ')\n'
+#                 )
+#
+#         # Write additional options
+#         additional_options = kwargs.get('additional_options', None)
+#         if additional_options:
+#             cmake_wrapper.write(additional_options + '\n')
+#
+#         # Write the original subdirectory / include
+#         if cmakelists_exists:
+#             cmake_wrapper.write('include("CMakeLists.txt.upstream")\n')
+#         else:
+#             source_subfolder = kwargs.get(
+#                 'source_subfolder', 'source_subfolder'
+#             )
+#             cmake_wrapper.write(
+#                 'add_subdirectory("' + source_subfolder + '")\n'
+#             )
+#
 
 
 #
 # CUDA Defaults
 #
 def get_cuda_version():
-    return ['11.0', '11.1', '11.2', '11.4', '11.5', '11.6', '11.7', 'None']
+    return ['11.0', '11.1', '11.2', '11.4', '11.5', '11.6', '11.7', '11.8', '12.0', '12.1', 'None']
 
 
 def get_cuda_arch():
     return ['6.0', '6.1', '7.0', '7.2', '7.5', '8.0', '8.6', '8.7', '9.0']
 
 
-
-#
-# Conan fixes
-#
-def __fix_conan_dependency_path(conanfile, file_path, package_name):
-    try:
-        tools.replace_in_file(
-            file_path,
-            conanfile.deps_cpp_info[package_name].rootpath.replace('\\', '/'),
-            "${CONAN_" + package_name.upper() + "_ROOT}",
-            strict=False
-        )
-    except Exception:
-        conanfile.output.info("Ignoring {0}...".format(package_name))
-
-
-def __cmake_fix_macos_sdk_path(conanfile, file_path):
-    try:
-        # Read in the file
-        with open(file_path, 'r') as file:
-            file_data = file.read()
-
-        if file_data:
-            # Replace the target string
-            pattern = (r';/Applications/Xcode\.app/Contents/Developer'
-                       r'/Platforms/MacOSX\.platform/Developer/SDKs/MacOSX\d\d\.\d\d\.sdk/usr/include')
-
-            # Match sdk path
-            file_data = re.sub(pattern, '', file_data, re.M)
-
-            # Write the file out again
-            with open(file_path, 'w') as file:
-                file.write(file_data)
-
-    except Exception:
-        conanfile.output.info(
-            "Skipping macOS SDK fix on {0}...".format(file_path)
-        )
-
-
-def fix_conan_path(
-    conanfile,
-    root,
-    wildcard,
-    build_folder=None
-):
-    # Normalization
-    package_folder = conanfile.package_folder.replace('\\', '/')
-
-    if build_folder:
-        build_folder = build_folder.replace('\\', '/')
-
-    conan_root = '${CONAN_' + conanfile.name.upper() + '_ROOT}'
-
-    # Recursive walk
-    for path, subdirs, names in os.walk(root):
-        for name in names:
-            if fnmatch(name, wildcard):
-                wildcard_file = os.path.join(path, name)
-
-                # Fix package_folder paths
-                tools.replace_in_file(
-                    wildcard_file, package_folder, conan_root, strict=False
-                )
-
-                # Fix build folder paths
-                if build_folder:
-                    tools.replace_in_file(
-                        wildcard_file, build_folder, conan_root, strict=False
-                    )
-
-                # Fix specific macOS SDK paths
-                if tools.os_info.is_macos:
-                    __cmake_fix_macos_sdk_path(
-                        conanfile, wildcard_file
-                    )
-
-                # Fix dependencies paths
-                for requirement in conanfile.requires:
-                    __fix_conan_dependency_path(
-                        conanfile, wildcard_file, requirement
-                    )
-
-
-
 #
 # Baseclass for CUDA Dependency
 #
 
-## somehow exporting does not provide access to package options
+# somehow exporting does not provide access to package options
 # so defining cuda_root only works with conan create, but not conan export ..
 CUDA_ROOT_DEFAULT = None
-if tools.os_info.is_windows:
-    CUDA_ROOT_DEFAULT = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.1"
-elif tools.os_info.is_linux:
-    CUDA_ROOT_DEFAULT = "/usr/local/cuda-11.1"
+if platform.system() == "Windows":
+    CUDA_ROOT_DEFAULT = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.7"
+elif platform.system() == "Linux":
+    CUDA_ROOT_DEFAULT = "/usr/local/cuda-11.7"
+
 
 # reusable code for ConanFile
 class CampCudaBase(object):
@@ -439,7 +346,7 @@ class CampCudaBase(object):
 
     only use these methods in one of:  validate(), build(), package(), package_info()
 
-    Expects two options: 
+    Expects two options:
     'cuda_version': requested CUDA Version
     'cuda_root': path to cuda sdk root directory
     """
@@ -452,7 +359,7 @@ class CampCudaBase(object):
             cuda_root = None
         if cuda_version == "ANY":
             cuda_version = None
-        
+
         if cuda_root is None:
             cuda_root, cv = self.__cuda_get_sdk_root_and_version(cuda_version)
             if cuda_version is not None and cv != cuda_version:
@@ -461,14 +368,12 @@ class CampCudaBase(object):
                 cuda_version = cv
             if cuda_root is None:
                 cuda_root = CUDA_ROOT_DEFAULT
-        
 
         if cuda_version is not None:
             if not self.__cuda_check_sdk_version(cuda_root, cuda_version):
                 raise RuntimeError("No suitable CUDA SDK Root directory found - cuda_check_sdk_version failed.")
 
         return cuda_root
-
 
     @LazyProperty
     def _cuda_version(self):
@@ -481,18 +386,15 @@ class CampCudaBase(object):
     def _cuda_bin_dir(self):
         return os.path.join(self._cuda_sdk_root, "bin")
 
-
     @LazyProperty
     def _cuda_lib_dir(self):
         return os.path.join(self._cuda_sdk_root, "lib")
-
 
     @LazyProperty
     def _cuda_include_dir(self):
         return os.path.join(self._cuda_sdk_root, "include")
 
     # internal methods
-
     def __cuda_get_sdk_root_and_version(self, cuda_version=None):
         cuda_sdk_root = None
         cuda_version_found = None
@@ -502,19 +404,18 @@ class CampCudaBase(object):
         if cuda_version is not None:
             if cuda_version not in supported_versions:
                 raise ValueError("Unsupported CUDA SDK Version requested: {0}".format(cuda_version))
-            find_cuda_versions = [cuda_version,]
+            find_cuda_versions = [cuda_version, ]
         else:
             find_cuda_versions = supported_versions
 
-
-        if tools.os_info.is_linux:
+        if platform.system() == "Linux":
             for cv in find_cuda_versions:
                 cuda_sdk_root = "/usr/local/cuda-{0}".format(cv)
                 if os.path.exists(cuda_sdk_root):
                     cuda_sdk_root = cuda_sdk_root
                     cuda_version_found = cv
                     break
-        if tools.os_info.is_windows:
+        if platform.system() == "Windows":
             default_path = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v{}"
             for version in find_cuda_versions:
                 cuda_sdk_root = default_path.format(version)
@@ -528,10 +429,8 @@ class CampCudaBase(object):
         self.output.info("Found CUDA SDK {0} at: {1}".format(cuda_version_found, cuda_sdk_root))
         return cuda_sdk_root, cuda_version_found
 
-
     def __cuda_get_nvcc_filename(self, cuda_sdk_root):
         return os.path.join(cuda_sdk_root, 'bin', 'nvcc')
-
 
     def __cuda_run_nvcc_command(self, cuda_sdk_root, command):
         if cuda_sdk_root is None:
@@ -539,11 +438,9 @@ class CampCudaBase(object):
         nvcc_executable = self.__cuda_get_nvcc_filename(cuda_sdk_root)
         output = StringIO()
         self.output.info('running command: "{0}" {1}'.format(nvcc_executable, command))
-        self.run('"{0}" {1}'.format(nvcc_executable, command), output=output, run_environment=True)
+        self.run('"{0}" {1}'.format(nvcc_executable, command), stdout=output)
         result = output.getvalue().strip()
         return result if result and result != "" else None
-
-
 
     def __cuda_get_sdk_version(self, cuda_sdk_root):
         cmd = "--version"
@@ -556,7 +453,6 @@ class CampCudaBase(object):
             return version
         return None
 
-
     def __cuda_check_sdk_version(self, cuda_sdk_root, cuda_version):
         if cuda_sdk_root is None:
             raise ValueError("Invalid CUDA SDK root: None")
@@ -567,11 +463,9 @@ class CampCudaBase(object):
         return True
 
 
-
 #
 # Python configuration
 #
-
 
 # reusable code for ConanFile
 class CampPythonBase(object):
@@ -579,12 +473,11 @@ class CampPythonBase(object):
     BaseClass for Conan PythonRequires for packages that have a python dependency.
 
     only use these methods in one of:  validate(), build(), package(), package_info()
-    
-    Expects two options: 
+
+    Expects two options:
     'python': name and or path to python interpreter
     'with_system_python': flag to state if system python should be used
     """
-
 
     @LazyProperty
     def _python_exec(self):
@@ -607,11 +500,11 @@ class CampPythonBase(object):
     @LazyProperty
     def _python_lib(self):
         py_lib = None
-        if tools.os_info.is_windows and not tools.os_info.detect_windows_subsystem():
+        if platform.system() == "Windows":  # @todo: and not tools.os_info.detect_windows_subsystem():
             py_lib = self._python_stdlib
             if py_lib:
                 py_lib = os.path.join(os.path.dirname(py_lib), "libs", "python" + self._python_version_nodot + ".lib")
-        elif tools.os_info.is_macos:
+        elif platform.system() == "Darwin":
             py_lib = os.path.join(self.__python_get_sysconfig_var('LIBDIR'), self.__python_get_sysconfig_var('LIBRARY'))
         else:
             py_lib = os.path.join(self.__python_get_sysconfig_var('LIBDIR'), self.__python_get_sysconfig_var('LDLIBRARY'))
@@ -620,7 +513,7 @@ class CampPythonBase(object):
     @LazyProperty
     def _python_lib_ldname(self):
         py_lib_ldname = None
-        if tools.os_info.is_windows and not tools.os_info.detect_windows_subsystem():
+        if platform.system() == "Windows":  # @todo: and not tools.os_info.detect_windows_subsystem():
             py_lib_ldname = os.path.basename(self._python_lib)
         else:
             py_lib_ldname = re.sub(r'lib', '', os.path.splitext(os.path.basename(self._python_lib))[0])
@@ -645,20 +538,18 @@ class CampPythonBase(object):
                     return py_include
         return None
 
-
-    #internal functions
+    # internal functions
     def __python_run_command(self, python_exec, command):
         output = StringIO()
         self.output.info('running python command: "{0}" -c "{1}"'.format(python_exec, command))
         self.run('"{0}" -c "{1}"'.format(python_exec, command), output=output, run_environment=True)
         return output.getvalue().strip()
 
-
     def __python_get_interpreter_fullpath(self, command=None, use_system_python=True):
         if command is None and not use_system_python:
             raise ValueError("Python interpreter not found - if use_system_python=False, you must specify a command")
         if command is None:
-            if tools.os_info.is_windows and not tools.os_info.detect_windows_subsystem():
+            if platform.system() == "Windows":  # @todo: and not tools.os_info.detect_windows_subsystem():
                 command = "python"
             else:
                 command = "python3"
@@ -669,7 +560,6 @@ class CampPythonBase(object):
             self.output.error("Error while running python command: {0}".format(e))
             raise RuntimeError("Error while executing python command.")
 
-
     def __python_get_sysconfig_var(self, var_name):
         try:
             cmd = "import sysconfig; print(sysconfig.get_config_var('{0}'))".format(var_name)
@@ -677,7 +567,6 @@ class CampPythonBase(object):
         except Exception as e:
             self.output.error("Error while running python command: {0}".format(e))
             raise RuntimeError("Error while executing python command.")
-
 
     def __python_get_sysconfig_path(self, path_name):
         try:
@@ -695,7 +584,6 @@ class CampPythonBase(object):
             self.output.error("Error while running python command: {0}".format(e))
             raise RuntimeError("Error while executing python command.")
 
-
     def __python_get_version_nodot(self, python_exec):
         try:
             cmd = "from sys import *; print('{0}{1}'.format(version_info[0],version_info[1]))"
@@ -703,9 +591,6 @@ class CampPythonBase(object):
         except Exception as e:
             self.output.error("Error while running python command: {0}".format(e))
             raise RuntimeError("Error while executing python command.")
-
-
-
 
 
 #
@@ -719,45 +604,52 @@ class CampCMakeBase(object):
     BaseClass for Conan PythonRequires for packages that build with cmake.
     """
 
-    source_subfolder = None
-    build_subfolder = None
-
-    def _configure_cmake(self):
-        cmake = CMake(self)
-        cmake.verbose = True
+    def generate(self):
+        tc = CMakeToolchain(self)
 
         def add_cmake_option(option, value):
             var_name = "{}".format(option).upper()
             value_str = "{}".format(value)
             var_value = "ON" if value_str == 'True' else "OFF" if value_str == 'False' else value_str
-            cmake.definitions[var_name] = var_value
+            tc.variables[var_name] = var_value
 
         for option, value in self.options.items():
             add_cmake_option(option, value)
+        self._configure_toolchain(tc)
+        tc.generate()
 
-        cmake.configure(source_folder=self.source_subfolder, build_folder=self.build_subfolder)
-        return cmake
+        deps = CMakeDeps(self)
+        self._configure_cmakedeps(deps)
+        deps.generate()
+
+    def layout(self):
+        cmake_layout(self, src_folder="source_subfolder")
 
     def build(self):
+        cmake = CMake(self)
         self._before_configure()
-        cmake = self._configure_cmake()
+        cmake = cmake.configure()
         self._before_build(cmake)
         cmake.build()
         self._after_build()
 
     def package(self):
-        cmake = self._configure_cmake()
+        cmake = CMake(self)
         self._before_package(cmake)
         cmake.install()
         self._after_package()
 
     def package_info(self):
-        self.cpp_info.libs = tools.collect_libs(self)
+        self.cpp_info.libs = collect_libs(self)
         self._after_package_info()
 
-
-
     # customization points
+
+    def _configure_toolchain(self, tc):
+        pass
+
+    def _configure_cmakedeps(self, deps):
+        pass
 
     def _before_configure(self):
         pass
@@ -777,9 +669,10 @@ class CampCMakeBase(object):
     def _after_package_info(self):
         pass
 
+
 class CommonConan(ConanFile):
     name = 'camp_common'
-    upstream_version = '0.1'
+    upstream_version = '0.5'
     package_revision = ''
     version = "{0}{1}".format(upstream_version, package_revision)
 
