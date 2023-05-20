@@ -638,6 +638,7 @@ class CampCMakeBase(object):
         deps = CMakeDeps(self)
         self._configure_cmakedeps(deps)
         deps.generate()
+        self._extend_generate()
 
     def layout(self):
         cmake_layout(self)
@@ -666,6 +667,9 @@ class CampCMakeBase(object):
         pass
 
     def _configure_cmakedeps(self, deps):
+        pass
+
+    def _extend_generate(self):
         pass
 
     def _before_configure(self):
