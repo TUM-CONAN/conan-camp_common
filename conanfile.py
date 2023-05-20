@@ -640,12 +640,12 @@ class CampCMakeBase(object):
         deps.generate()
 
     def layout(self):
-        cmake_layout(self, src_folder="source_subfolder")
+        cmake_layout(self)
 
     def build(self):
         cmake = CMake(self)
         self._before_configure()
-        cmake = cmake.configure()
+        cmake.configure()
         self._before_build(cmake)
         cmake.build()
         self._after_build()
