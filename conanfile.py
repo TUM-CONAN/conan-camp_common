@@ -233,7 +233,10 @@ class CampCudaBase(object):
 
     @LazyProperty
     def _cuda_lib_dir(self):
-        return os.path.join(self._cuda_sdk_root, "lib64")
+        if platform.system() == "Windows":
+            return os.path.join(self._cuda_sdk_root, "lib", "x64")
+        else:
+            return os.path.join(self._cuda_sdk_root, "lib64")        
 
     @LazyProperty
     def _cuda_include_dir(self):
