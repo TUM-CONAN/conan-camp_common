@@ -164,7 +164,8 @@ def get_full_cxx_flags(**kwargs):
 # CUDA Defaults
 #
 def get_cuda_version():
-    return ['11.0', '11.1', '11.2', '11.4', '11.5', '11.6', '11.7', '11.8', '12.0', '12.1', 'None']
+    return ['11.0', '11.1', '11.2', '11.4', '11.5', '11.6', '11.7', '11.8', 
+            '12.0', '12.1', '12.2', '12.4', '12.5', '12.6', 'None']
 
 
 def get_cuda_arch():
@@ -179,9 +180,9 @@ def get_cuda_arch():
 # so defining cuda_root only works with conan create, but not conan export ..
 CUDA_ROOT_DEFAULT = None
 if platform.system() == "Windows":
-    CUDA_ROOT_DEFAULT = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.7"
+    CUDA_ROOT_DEFAULT = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.8"
 elif platform.system() == "Linux":
-    CUDA_ROOT_DEFAULT = "/usr/local/cuda-11.7"
+    CUDA_ROOT_DEFAULT = "/usr/local/cuda-11.8"
 
 
 # reusable code for ConanFile
