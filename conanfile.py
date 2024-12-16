@@ -343,7 +343,16 @@ class CampPythonBase(object):
     Expects two options:
     'python': name and or path to python interpreter
     'with_system_python': flag to state if system python should be used
+    'python_version': major.minor version of the custom python interpreter to be used (as used in path specs. like python3.12)
     """
+
+    @LazyProperty
+    def _has_cpython_dependency(self):
+        return "cpython" in self.dependencies
+
+    @LazyProperty
+    def _get_cpython_dependency(self):
+        return self.dependencies['cpython']
 
     @LazyProperty
     def _python_exec(self):
@@ -353,6 +362,11 @@ class CampPythonBase(object):
             cmd = str(self.options.python)
         if 'with_system_python' in self.options:
             with_system_python = bool(self.options.with_system_python)
+        if self._has_cpython_dependency and not with_system_python:
+            if platform.system() == "Windows":
+                cmd = os.path.join(self._get_cpython_dependency.package_folder, "bin", "python.exe")
+            else:
+                cmd = os.path.join(self._get_cpython_dependency.package_folder, "bin", "python")
         return self.__python_get_interpreter_fullpath(cmd, with_system_python)
 
     @LazyProperty
@@ -412,8 +426,6 @@ class CampPythonBase(object):
         return output.getvalue().strip()
 
     def __python_get_interpreter_fullpath(self, command=None, use_system_python=True):
-        if command is None and not use_system_python:
-            raise ValueError("Python interpreter not found - if use_system_python=False, you must specify a command")
         if command is None:
             if platform.system() == "Windows":  # @todo: and not tools.os_info.detect_windows_subsystem():
                 command = "python"
@@ -545,6 +557,8 @@ class CommonConan(ConanFile):
     upstream_version = '0.5'
     package_revision = ''
     version = "{0}{1}".format(upstream_version, package_revision)
+
+    package_type = "python-require"
 
     description = 'Helper functions for conan'
     url = 'https://github.com/TUM-CONAN/conan-camp-common'
