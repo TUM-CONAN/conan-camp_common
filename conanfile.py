@@ -381,7 +381,7 @@ class CampPythonBase(object):
                     cmd = os.path.join(self._get_cpython_dependency.package_folder, "bin", "python")
         else:
             cmd = self._get_system_python_path
-        return self.__python_get_interpreter_fullpath(cmd, with_system_python)
+        return self.__python_get_interpreter_fullpath(cmd)
 
     @LazyProperty
     def _python_version(self):
