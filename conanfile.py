@@ -385,10 +385,14 @@ class CampPythonBase(object):
 
     @LazyProperty
     def _python_version(self):
+        if self._use_custom_python:
+            return self._get_custom_python_version
         return self.__python_get_version(self._python_exec)
 
     @LazyProperty
     def _python_version_nodot(self):
+        if self._use_custom_python:
+            return self._get_custom_python_version.replace(".", "")
         return self.__python_get_version_nodot(self._python_exec)
 
     @LazyProperty
