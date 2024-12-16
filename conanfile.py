@@ -340,33 +340,47 @@ class CampPythonBase(object):
 
     only use these methods in one of:  validate(), build(), package(), package_info()
 
-    Expects two options:
-    'python': name and or path to python interpreter
-    'with_system_python': flag to state if system python should be used
-    'python_version': major.minor version of the custom python interpreter to be used (as used in path specs. like python3.12)
+    works with two configuration options (defined in the [conf] settings of the profile)
+    if use_custom_python is device, the system-python-command will be ignored:
+    - camp.common:use_custom_python: 3.12
+    - camp.common:system_python_command: /usr/bin/python3.10
     """
 
-    @LazyProperty
-    def _has_cpython_dependency(self):
-        return "cpython" in self.dependencies
 
     @LazyProperty
-    def _get_cpython_dependency(self):
-        return self.dependencies['cpython']
+    def _get_custom_python_version(self):
+        return self.conf.get("user.camp.common:use_custom_python", default=None, check_type=str)
+
+    @LazyProperty
+    def _get_system_python_path(self):
+        if self._get_custom_python_version is not None:
+            return None
+
+        default_cmd = "python3"
+        if self.settings.os == "Windows":
+            default_cmd = "python.exe"
+        return self.conf.get("user.camp.common:system_python_command", default=default_cmd, check_type=str)
+
+    @LazyProperty
+    def _use_custom_python(self):
+        return self._get_custom_python_version is not None
 
     @LazyProperty
     def _python_exec(self):
         cmd = None
-        with_system_python = True
-        if 'python' in self.options:
-            cmd = str(self.options.python)
-        if 'with_system_python' in self.options:
-            with_system_python = bool(self.options.with_system_python)
-        if self._has_cpython_dependency and not with_system_python:
-            if platform.system() == "Windows":
-                cmd = os.path.join(self._get_cpython_dependency.package_folder, "bin", "python.exe")
-            else:
-                cmd = os.path.join(self._get_cpython_dependency.package_folder, "bin", "python")
+        if self._use_custom_python:
+            if not "cpython" in self.dependencies:
+                raise RuntimeError("ConanFile does not have cpython as dependency, which is required when using a custom python interpreter")
+            cpy_dep = self.dependencies["cpython"]
+            cmd = cpy_dep.conf_info.get("user.cpython:python")
+            if cmd is None:
+                self.output.warn("could not retrieve 'user.cpython:python' conf_info from cpython dependency - trying to provide sensible default")
+                if platform.system() == "Windows": # missing windows subsystem ..
+                    cmd = os.path.join(self._get_cpython_dependency.package_folder, "bin", "python.exe")
+                else:
+                    cmd = os.path.join(self._get_cpython_dependency.package_folder, "bin", "python")
+        else:
+            cmd = self._get_system_python_path
         return self.__python_get_interpreter_fullpath(cmd, with_system_python)
 
     @LazyProperty
@@ -425,13 +439,9 @@ class CampPythonBase(object):
         self.run('"{0}" -c "{1}"'.format(python_exec, command), stdout=output)
         return output.getvalue().strip()
 
-    def __python_get_interpreter_fullpath(self, command=None, use_system_python=True):
+    def __python_get_interpreter_fullpath(self, command):
         if command is None:
-            if platform.system() == "Windows":  # @todo: and not tools.os_info.detect_windows_subsystem():
-                command = "python"
-            else:
-                command = "python3"
-
+            raise RuntimeError("Invalid python executable path: None")
         try:
             return self.__python_run_command(command, "import sys; print(sys.executable)")
         except Exception as e:
