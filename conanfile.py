@@ -349,7 +349,8 @@ class CampPythonBase(object):
 
     @LazyProperty
     def _get_custom_python_version(self):
-        return self.conf.get("user.camp.common:use_custom_python", default=None, check_type=str)
+        ver = self.conf.get("user.camp.common:use_custom_python", default=None, check_type=str)
+        return "{0}.{1}".format(ver.split(".")[:2])
 
     @LazyProperty
     def _get_system_python_path(self):
