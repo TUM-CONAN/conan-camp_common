@@ -7,6 +7,7 @@ import re
 from conan import ConanFile
 from conan.tools.cmake import CMake, CMakeToolchain, cmake_layout, CMakeDeps
 from conan.tools.files import collect_libs
+from conan.tools.microsoft import is_msvc
 
 from functools import update_wrapper
 import platform
@@ -511,6 +512,9 @@ class CampCMakeBase(object):
 
         for option, value in self.options.items():
             add_cmake_option(option, value)
+        # @todo: this is a hack to make cuda compile
+        if is_msvc(self) and "vs_runtime" in tc.blocks.keys():
+            tc.blocks.remove("vs_runtime")
         self._configure_toolchain(tc)
         tc.generate()
 
@@ -572,7 +576,7 @@ class CampCMakeBase(object):
 
 class CommonConan(ConanFile):
     name = 'camp_common'
-    upstream_version = '0.5'
+    upstream_version = '0.6'
     package_revision = ''
     version = "{0}{1}".format(upstream_version, package_revision)
 
