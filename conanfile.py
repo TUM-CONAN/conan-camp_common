@@ -170,7 +170,7 @@ def get_cuda_version():
 
 
 def get_cuda_arch():
-    return ['6.0', '6.1', '7.0', '7.2', '7.5', '8.0', '8.6', '8.7', '9.0']
+    return ['6.0', '6.1', '7.0', '7.2', '7.5', '8.0', '8.6', '8.7', '8.9', '9.0', '12.0']
 
 
 #
@@ -181,9 +181,9 @@ def get_cuda_arch():
 # so defining cuda_root only works with conan create, but not conan export ..
 CUDA_ROOT_DEFAULT = None
 if platform.system() == "Windows":
-    CUDA_ROOT_DEFAULT = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.8"
+    CUDA_ROOT_DEFAULT = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.9"
 elif platform.system() == "Linux":
-    CUDA_ROOT_DEFAULT = "/usr/local/cuda-11.8"
+    CUDA_ROOT_DEFAULT = "/usr/local/cuda-12.9"
 
 
 # reusable code for ConanFile
