@@ -166,7 +166,8 @@ def get_full_cxx_flags(**kwargs):
 #
 def get_cuda_version():
     return ['11.0', '11.1', '11.2', '11.4', '11.5', '11.6', '11.7', '11.8',
-            '12.0', '12.1', '12.2', '12.3', '12.4', '12.5', '12.6', '12.7', '12.8', '12.9', 'None']
+            '12.0', '12.1', '12.2', '12.3', '12.4', '12.5', '12.6', '12.7', '12.8', '12.9',
+            '13.0', '13.1', '13.2', 'None']
 
 
 def get_cuda_arch():
@@ -266,7 +267,7 @@ class CampCudaBase(object):
         cuda_sdk_root = None
         cuda_version_found = None
 
-        supported_versions = reversed([v for v in get_cuda_version() if v != 'None'])
+        supported_versions = list(reversed([v for v in get_cuda_version() if v != 'None']))
         find_cuda_versions = []
         if cuda_version is not None:
             if cuda_version not in supported_versions:
@@ -576,7 +577,7 @@ class CampCMakeBase(object):
 
 class CommonConan(ConanFile):
     name = 'camp_common'
-    upstream_version = '0.6'
+    upstream_version = '0.7'
     package_revision = ''
     version = "{0}{1}".format(upstream_version, package_revision)
 
